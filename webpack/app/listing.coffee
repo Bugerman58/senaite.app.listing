@@ -7,6 +7,7 @@
 ###
 import React from "react"
 import ReactDOM from "react-dom"
+import { v4 as uuidv4 } from "uuid"
 
 import ButtonBar from "./components/ButtonBar.coffee"
 import FilterBar from "./components/FilterBar.coffee"
@@ -18,6 +19,7 @@ import Pagination from "./components/Pagination.coffee"
 import SearchBox from "./components/SearchBox.coffee"
 import Table from "./components/Table.coffee"
 import TableColumnConfig from "./components/TableColumnConfig.coffee"
+import ToastNotification from "./components/Toast.js"
 
 import { DndProvider } from "react-dnd"
 import { HTML5Backend } from "react-dnd-html5-backend"
@@ -87,6 +89,8 @@ class ListingController extends React.Component
     @showRowMenu = @showRowMenu.bind @
     @handleRowMenuAction = @handleRowMenuAction.bind @
     @on_row_order_change = @on_row_order_change.bind @
+    @on_click = @on_click.bind @
+    @removeToast = @removeToast.bind @
 
     # root element
     @root_el = @props.root_el
@@ -208,6 +212,8 @@ class ListingController extends React.Component
       # progress bar
       progress: null
       progress_label: null
+      # toast notifications
+      toasts: []
 
   ###*
    * Translate the given i18n string
@@ -266,6 +272,35 @@ class ListingController extends React.Component
     return true
 
   ###*
+   * Show Bootstrap Toast notification
+   *
+   * @param message {string} message to show
+   * @param title {string} title to show
+  ###
+  showToast: (message, title=_t("Notification")) ->
+    toast =
+      id: uuidv4()
+      title: title
+      message: message
+    @setState (prevState) ->
+      toasts: [...prevState.toasts, toast]
+
+    # remove message after 5 seconds
+    remove = () =>
+      console.log "Remove toast ID #{toast.id}"
+      @removeToast(toast.id)
+    setTimeout(remove, 5000)
+
+  ###*
+   * Remove Bootstrap Toast notification by ID
+   *
+   * @param id {string} ID of the message
+  ###
+  removeToast: (id) ->
+    @setState (prevState) ->
+      toasts: prevState.toasts.filter (toast) -> toast.id isnt id
+
+  ###*
    * Parameters to be sent in each Ajax POST request
    * @returns {object} current state values
   ###
@@ -289,12 +324,14 @@ class ListingController extends React.Component
   componentDidMount: ->
     window.addEventListener("popstate", @on_popstate, false);
     @fetch_folderitems()
+    @root_el.addEventListener("click", @on_click)
 
   ###*
    * ReactJS event handler when the component unmounts
   ###
   componentWillUnmount: ->
     window.removeEventListener("popstate", @on_popstate, false);
+    @root_el.removeEventListener("click", @on_click)
 
   ###*
    * componentDidUpdate(prevProps, prevState, snapshot)
@@ -1034,6 +1071,29 @@ class ListingController extends React.Component
         el.append(text)
         el.one "submit", on_submit
         el.modal("show")
+
+  ###*
+   * Load a listing action asynchronously
+   *
+   * @param url {string} URL to load
+   * @param reload {boolean} reload folderitems if true
+  ###
+  ajaxLoadActionURL: (url, reload=yes) ->
+    me = this
+
+    # turn loader on
+    @toggle_loader on
+
+    fetch(url, { method: "GET" })
+      .then (response) ->
+        return response.json()
+      .then (json) ->
+        if reload then me.fetch_folderitems()
+        me.showToast(json.message, title=json.title)
+        me.toggle_loader off
+      .catch (error) ->
+        me.showToast("Action failed: ", error)
+        me.toggle_loader off
 
   ###*
    * Execute an action
@@ -2065,6 +2125,18 @@ class ListingController extends React.Component
    *      https://reactjs.org/docs/handling-events.html
   ###
 
+  on_click: (event) ->
+    console.debug "°°° ListingController::on_click"
+
+    target = event.target
+    link = target.closest "a"
+
+    # asynchornously load the link URL and reload the table
+    if link and link.classList.contains("listing-ajax-action")
+      event.preventDefault()
+      url = link.href
+      @ajaxLoadActionURL(url, reload=yes)
+
   on_column_config_click: (event) ->
     event.preventDefault()
     return unless @state.show_column_toggles
@@ -2205,6 +2277,11 @@ class ListingController extends React.Component
 
     return (
       <DndProvider backend={HTML5Backend}>
+        <div style={{ position: "fixed", top: "1rem", right: "1rem", zIndex: 1050 }}>
+          { @state.toasts.map (toast) =>
+            <ToastNotification key={toast.id} id={toast.id} message={toast.message} title={toast.title or "Info"} onClose={@removeToast} />
+          }
+        </div>
         <div className="listing-container">
           <Modal className="modal fade" id="modal_#{@form_id}" />
           <Messages on_dismiss_message={@dismissMessage} id="messages" className="messages" messages={@state.messages} />
